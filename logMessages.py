@@ -22,7 +22,7 @@ all_keys = set()
 topics = {}
 
 def wtfs(dpt, tdata):
-    with open(dpt, "w") as f:
+    with open(dpt, "w+") as f:
         f.write(tdata)
     return 0
 
@@ -38,19 +38,19 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     global last_message_time
-    topic = msg.topic
-    if time.time() - last_message_time >= 5:
-        os.system('cls')
-        print("Connected to " + printerName + " on IP " + bambuIP)
-        elapsed_time = time.time() - start_time
-        elapsed_time_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
-        print(f"The process has been running for: {elapsed_time_str}")
-        print(topics)
-        print('--------------------------------------------------------------------------------------------')
-        last_message_time = time.time()
-    tstr = str(time.time())
-    chkDir("./msgs/"+topic)
-    data = json.loads(msg.payload.decode("utf-8"))
+        topic = msg.topic
+        if time.time() - last_message_time >= 5:
+            os.system('cls')
+            print("Connected to " + printerName + " on IP " + bambuIP)
+            elapsed_time = time.time() - start_time
+            elapsed_time_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_time))
+            print(f"The process has been running for: {elapsed_time_str}")
+            print(topics)
+            print('--------------------------------------------------------------------------------------------')
+            last_message_time = time.time()
+        tstr = str(time.time())
+        data = json.loads(msg.payload.decode("utf-8"))
+        print(json.dumps(data))
     if topic not in topics:
         topics[topic] = set(data.keys())
     else:

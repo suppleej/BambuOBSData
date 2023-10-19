@@ -29,10 +29,8 @@ msan = os.getenv("mainSceneActionName")
 bsai = os.getenv("brbSceneActionID")
 bsan = os.getenv("brbSceneActionName")
 esTimeout = int(os.getenv("endStreamTimeout"))
-dPoints = ['layer_num','total_layer_num','bed_target_temper','bed_temper','chamber_temper','nozzle_target_temper','nozzle_temper','gcode_start_time','mc_percent','mc_remaining_time','spd_lvl','spd_mag','big_fan1_speed','big_fan2_speed','cooling_fan_speed']
-
-endTimeCheck = ""
-brbSceneActive = False
+#dPoints = ['layer_num','total_layer_num','bed_target_temper','bed_temper','chamber_temper','nozzle_target_temper','nozzle_temper','gcode_start_time','mc_percent','mc_remaining_time','spd_lvl','spd_mag','big_fan1_speed','big_fan2_speed','cooling_fan_speed']
+dPoints = ['nozzle_temper','mc_percent', 'layer_num']
 
 if scenePath.endswith("/"):
     scenePath = scenePath[:-1]
@@ -47,6 +45,8 @@ headers = {
     'Accept': 'application/json'
 }
 
+
+
 def sbDoAction(id, name):
     payload = {
         "action": {
@@ -54,15 +54,16 @@ def sbDoAction(id, name):
             "name": name
         }
     }
-    conn = http.client.HTTPConnection(sbConn)
-    conn.request("POST", "/DoAction", json.dumps(payload), headers)
-    res = conn.getresponse()
+#
+#    conn = http.client.HTTPConnection(sbConn)
+#    conn.request("POST", "/DoAction", json.dumps(payload), headers)
+#    res = conn.getresponse()
     # According to the documentation /DoAction only responds with a 204 status code.
     # We will check for a 204 and if anything else is returned we will call it an error
-    if res.status == 204:
-        return "Success: Got a 204 response"
-    else:
-        return f"Error: Got {res.status} response"
+#    if res.status == 204:
+#        return "Success: Got a 204 response"
+#    else:
+#        return f"Error: Got {res.status} response"
 
 def obsGetScene():
     sbDoAction(gsai, gsan)
@@ -74,8 +75,20 @@ def obsGetScene():
 
 def wtfs(dpt, tdata):
     dpath = scenePath + '/' + dpt + '.txt'
-    with open(dpath, "w") as f:
-        f.write(tdata)
+    try:
+        with open(dpath, "w+") as f:
+            f.write(tdata)
+    except:
+        print("Didn't even get to write")
+    return 0
+    
+def wtfs_log(dpt, tdata):
+    dpath = scenePath + '/' + dpt + '.txt'
+    try:
+        with open(dpath, "a") as f:
+            f.write(tdata + ';')
+    except:
+        print("Didn't even get to write")
     return 0
 
 def rtnt(n):
@@ -90,103 +103,35 @@ def on_connect(client, userdata, flags, rc):
     print("Sending data to " + os.path.abspath(scenePath))
     client.subscribe("device/" + bambuSerial + "/report")
 
+def convert_minutes_to_hr_min(minutes):
+    hours = minutes // 60
+    minutes = minutes % 60
+    return f"Time Remaining: {hours}hr {minutes:02d}min"
+
 def on_message(client, userdata, msg):
-    global endTimeCheck
-    global brbSceneActive
-    data = json.loads(msg.payload.decode("utf-8"))
-    wtfs("BambuJsonDump.json", msg.payload.decode("utf-8"))
+    data = json.loads(msg.payload.decode("utf-8").replace("'","\""))
+    print(data)    
+    
+    if "t_utc" not in data:
+        wtfs_log("BambuJsonDump", json.dumps(data))
+    
     if "print" in data:
-        if "bed_temper" in data['print']:
-            # We are going to loop to the dPoints list of nodes and publish that data to the corresponding
-            # files on the file system for OBS to pickup and use
-            for setting in dPoints:
-                if "fan" in setting:
-                    fspd = rtnt(round((100/15)*int(data['print'][setting])))
-                    tdata = str(fspd) + '%'
-                    if "fan1" in setting:
-                        wtfs("aux_fan_speed", tdata)
-                    elif "fan2" in setting:
-                        wtfs("chamber_fan_speed", tdata)
-                    elif "fan_" in setting:
-                        wtfs("part_cooling_fan_speed", tdata)
-                elif "temper" in setting:
-                    tc = setting[:-2]+'_c'
-                    tf = setting[:-2] + '_f'
-                    tcdata = str(int(data['print'][setting]))
-                    tfdata = str(int((data['print'][setting] * 9/5) + 32))
-                    wtfs(tc, tcdata)
-                    wtfs(tf, tfdata)
-                elif "start_" in setting:
-                    date_time = datetime.datetime.fromtimestamp(int(data['print'][setting]))
-                    date_time_str = date_time.strftime('%b-%d %I:%M %p %Z')
-                    now = datetime.datetime.now()
-                    end_time = now + datetime.timedelta(minutes=int(data['print']['mc_remaining_time']))
-                    end_time_str = end_time.strftime('%b-%d %I:%M %p %Z')
-                    wtfs(setting, date_time_str)
-                    wtfs('gcode_end_time_estimated', end_time_str)
-                elif "remaining_" in setting:
-                    minrem = data['print'][setting]
-                    hours, remainder = divmod(minrem, 60)
-                    tdata = "{}:{:02d} Remains".format(hours, remainder)
-                    wtfs(setting, tdata)
-                elif "_lvl" in setting:
-                    if data['print'][setting] == 1:
-                        tdata = "Silent"
-                    elif data['print'][setting] == 2:
-                        tdata = "Standard"
-                    elif data['print'][setting] == 3:
-                        tdata = "Sport"
-                    elif data['print'][setting] == 4:
-                        tdata = "Ludacris"
-                    wtfs(setting, tdata)
-                elif "layer" in setting:
-                    tdata = str(data['print'][setting])
-                    wtfs(setting, tdata)
-                else:
-                    tdata = str(data['print'][setting]) + '%'
-                    if "_mag" in setting:
-                        wtfs("spd_percent", tdata + ' Speed')
-                    elif "mc_percent" in setting:
-                        wtfs(setting, tdata + ' Complete')
-                    else:
-                        wtfs(setting, tdata)
-            # If the print is finished and the nozzle has cooled below 50 I am going to end the stream
-            # This requires Streamer.bot to be connected to OBS via OBS WebSockets and for an action
-            # to have been created in Streamer.bot that tells OBS to end the stream.
-            if data['print']['gcode_state'] == "FINISH" and data['print']['nozzle_temper'] < 50:
-                # Lets check if we set a timestamp
-                if not endTimeCheck:
-                    # Timestamp was not set. setting for future loop usage
-                    endTimeCheck = time.time()
-                else:
-                    current_time = time.time()
-                    difference = current_time - endTimeCheck
-                    # Check if 10 minutes (600 seconds) has passed. If it has we assume that you are not changing prints
-                    # and ending the stream.
-                    if difference > esTimeout:
-                        print("Print finished, ending stream")
-                        # I manually obtained the ID for the action by running a curl GET on the /GetActions uri of the server
-                        if msai:
-                            print(sbDoAction(esai, esan))
-                        # Since we are no longer streaming we will exit the script
-                        sys.exit()
-                    else:
-                        # Here we will change the scene to the BRB scene if it has not been done already so you can change
-                        # prints.
-                        if bsai:
-                            if brbSceneActive == False:
-                                print(sbDoAction(bsai, bsan))
-                                brbSceneActive = True
-            else:
-                # We are going to set endTimeCheck to blank and brbSceneActive to False if the conditions are not met
-                # to keep the check variables clean except when conditions are met. So if during the 10 min period
-                # you start another print it will clear the vars and not end the stream. We will also check to see
-                # if the current scene is the main printing scene and if it is not we will switch scenes.
-                endTimeCheck = ""
-                brbSceneActive = False
-                if gsai:
-                    if obsGetScene() == brbScene:
-                        print(sbDoAction(msai, msan))
+            if "nozzle_temper" in data['print']:
+                tcdata = str(int(data['print']['nozzle_temper']))
+                wtfs('nozzle_temper', 'Nozzle temp: ' + tcdata + 'c')
+
+            elif "mc_percent" in data['print']:
+                tdata = str(data['print']['mc_percent']) + '%'
+                wtfs('mc_percent', tdata + ' Complete')
+                    
+            elif "layer_num" in data['print']:
+                wtfs('layer_num', 'Layer: ' + str(data['print']['layer_num']))
+            
+            elif "mc_remaining_time" in data['print']:
+                wtfs('mc_remaining_time', convert_minutes_to_hr_min(data['print']['mc_remaining_time']))
+
+
+
 
 client = mqtt.Client(userdata={"data": None})
 client.tls_set(tls_version=ssl.PROTOCOL_TLS, ciphers=None, cert_reqs=ssl.CERT_NONE)
